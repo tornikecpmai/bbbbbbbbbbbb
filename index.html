@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grow or Escape</title>
+  <style>
+    html, body { margin:0; padding:0; overflow:hidden; background:#050712; font-family:Arial,sans-serif; color:white; touch-action:none; }
+    canvas { display:block; background:radial-gradient(circle at center,#101733 0%,#050712 70%); }
+    #ui { position:fixed; top:16px; left:16px; z-index:10; font-size:18px; line-height:1.5; text-shadow:0 0 10px #00eaff; }
+    #center { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; background:rgba(0,0,0,.38); z-index:20; text-align:center; }
+    h1 { font-size:52px; margin:0 0 12px; text-shadow:0 0 24px #00eaff; }
+    p { font-size:18px; opacity:.9; }
+    button { margin-top:18px; padding:14px 28px; border:0; border-radius:999px; background:#00eaff; color:#06111f; font-size:18px; font-weight:bold; cursor:pointer; box-shadow:0 0 24px #00eaff; position:relative; z-index:9999; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+    #hint { position:fixed; bottom:118px; width:100%; text-align:center; color:rgba(255,255,255,.7); font-size:14px; z-index:10; }
+    #controlPad { position:fixed; left:0; right:0; bottom:0; height:105px; z-index:11; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,rgba(0,234,255,.03),rgba(0,234,255,.16)); border-top:2px solid rgba(0,234,255,.45); box-shadow:0 -10px 35px rgba(0,234,255,.12); color:rgba(255,255,255,.82); font-size:15px; letter-spacing:.4px; text-shadow:0 0 10px #00eaff; }
+  </style>
+</head>
+<body>
+<div id="ui">
+Multiplier: <span id="mult">x1.00</span><br>
+Status: <span id="status">Grow</span>
+</div>
+<div id="hint">Eat blue dots • Avoid red bombs • Escape through yellow portal</div>
+<div id="controlPad"><span>CONTROL AREA — აქედან მართე ბურთი</span></div>
+<div id="center">
+<h1>GROW OR ESCAPE</h1>
+<p>ჭამე multiplier dots, გაიზარდე და მოძრავ portal-ში გაიტანე მოგება.</p>
+<button id="startBtn" onclick="startGame()">START ROUND</button>
+</div>
+<canvas id="game"></canvas>
+<script>
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const multEl=document.getElementById('mult'),statusEl=document.getElementById('status'),center=document.getElementById('center');
+let W,H,player,dots,bombs,portal,bots,startTime,roundLength,lastPlayerX,lastPlayerY,running=false,mouse={x:0,y:0};
+let CONTROL_H=Math.min(window.innerHeight*0.18,140);
+const MOBILE=window.innerWidth<900;
+
+function resize(){
+W=canvas.width=innerWidth;
+H=canvas.height=innerHeight;
+if(!mouse.x){mouse.x=W/2;mouse.y=H/2;}
+}
+addEventListener('resize',resize); resize();
+
+addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
+addEventListener('touchmove',e=>{
+if(e.touches[0]){
+e.preventDefault();
+const t=e.touches[0];
+mouse.x=t.clientX;
+mouse.y=t.clientY;
+}}, {passive:false});
+
+function rand(a,b){return Math.random()*(b-a)+a;}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function dot(){
+let v=[.06,.09,.12,.18,.25][Math.floor(Math.random()*5)];
+const sizeScale=MOBILE?.72:1;
+return{x:rand(30,W-30),y:rand(70,H-CONTROL_H-35),r:(7+v*18)*sizeScale,v,p:rand(0,6.28)}
+}
+
+function bomb(){
+const sizeScale=MOBILE?.78:1;
+return{x:rand(35,W-35),y:rand(80,H-CONTROL_H-40),baseR:rand(10,16)*sizeScale,r:rand(10,16)*sizeScale,p:rand(0,6.28)}
+}
+
+function getBombRadius(b){
+if(!player) return b.baseR || b.r;
+const shrink=Math.min((player.r-16)*0.012,0.45);
+const target=(b.baseR || b.r)*(1-shrink);
+return Math.max(target, MOBILE?5:7);
+}
+
+function makeBot(i){
+const sizeScale=MOBILE?.78:1;
+return{
+x:rand(60,W-60),
+y:rand(80,H-CONTROL_H-80),
+r:rand(13,19)*sizeScale,
+m:rand(1,1.6),
+speed:rand(1.2,1.9)*(MOBILE?.9:1),
+color:['#ff9f1c','#9b5cff','#39ff88','#ff4fd8','#ffffff','#ffdd33','#42a5ff'][i%7],
+name:['BOT-7','NIKA','LUKA','VIP','HUNTER','FAST','GEO'][i%7]
+}
+}
+
+function updateBots(){
+if(!bots)return;
+bots.forEach(bot=>{
+let target=dots[0],best=99999;
+dots.forEach(d=>{
+let dd=dist(bot,d);
+if(dd<best){best=dd;target=d;}
+});
+
+let tx=target.x,ty=target.y;
+let pd=dist(bot,player);
+
+if(bot.r>player.r*1.12&&pd<220){
+tx=player.x;ty=player.y;
+}else if(bot.r<player.r*.9&&pd<180){
+tx=bot.x+(bot.x-player.x);
+ty=bot.y+(bot.y-player.y);
+}
+
+let dx=tx-bot.x,dy=ty-bot.y,len=Math.hypot(dx,dy)||1;
+bot.x+=(dx/len)*bot.speed;
+bot.y+=(dy/len)*bot.speed;
+
+for(let i=dots.length-1;i>=0;i--){
+if(dist(bot,dots[i])<bot.r+dots[i].r){
+bot.m+=dots[i].v;
+bot.r+=dots[i].v*2.8;
+dots.splice(i,1);
+dots.push(dot());
+}
+}
+
+if(dist(bot,player)<bot.r+player.r*.75){
+if(bot.r>player.r*1.08){
+endGame('EATEN!',bot.name+' ate you.');
+}else if(player.r>bot.r*1.08){
+player.m+=bot.m*.15;
+player.r+=bot.r*.08;
+Object.assign(bot,makeBot(Math.floor(rand(0,7))));
+}
+}
+});
+}
+
+function drawBots(){
+if(!bots)return;
+bots.forEach(bot=>{
+glow(bot.x,bot.y,bot.r,bot.color,28);
+ctx.fillStyle='#06111f';
+ctx.font='bold 11px Arial';
+ctx.textAlign='center';
+ctx.fillText(bot.m.toFixed(1)+'x',bot.x,bot.y+4);
+});
+}
+
+function startGame(){
+player={x:W/2,y:H/2,r:MOBILE?13:16,m:1,s:MOBILE?.12:.105};
+lastPlayerX=player.x;
+lastPlayerY=player.y;
+dots=Array.from({length:38},dot);
+bombs=Array.from({length:7},bomb);
+bots=Array.from({length:7},(_,i)=>makeBot(i));
+portal={x:rand(90,W-90),y:rand(100,H-CONTROL_H-90),r:38,active:false,lastMove:0};
+startTime=performance.now();
+roundLength=rand(12000,18000);
+running=true;
+center.style.display='none';
+requestAnimationFrame(loop);
+}
+
+function endGame(t,msg){
+running=false;
+center.innerHTML=`<h1>${t}</h1><p>${msg}</p><button onclick="location.reload()">PLAY AGAIN</button>`;
+center.style.display='flex';
+}
+
+function glow(x,y,r,c,g=22){
+ctx.save();
+ctx.shadowBlur=g;
+ctx.shadowColor=c;
+ctx.fillStyle=c;
+ctx.beginPath();
+ctx.arc(x,y,r,0,Math.PI*2);
+ctx.fill();
+ctx.restore();
+}
+
+function loop(now){
+if(!running)return;
+
+let elapsed=now-startTime;
+
+if(elapsed>2000){
+portal.active=true;
+statusEl.textContent='ESCAPE!';
+}
+
+if(elapsed>=roundLength){
+endGame('LOST','Arena collapsed.');
+return;
+}
+
+let speed=Math.max(.045,player.s-(player.r-16)*.00085);
+player.x+=(mouse.x-player.x)*speed;
+player.y+=(mouse.y-player.y)*speed;
+
+let moved=Math.hypot(player.x-lastPlayerX,player.y-lastPlayerY);
+
+if(moved<0.35&&player.m>1){
+player.m=Math.max(1,player.m-0.012);
+player.r=Math.max(16,player.r-0.045);
+}
+
+lastPlayerX=player.x;
+lastPlayerY=player.y;
+
+for(let i=dots.length-1;i>=0;i--){
+if(dist(player,dots[i])<player.r+dots[i].r){
+player.m+=dots[i].v;
+player.r+=dots[i].v*3.5;
+dots.splice(i,1);
+dots.push(dot());
+}
+}
+
+if(!window.lastBombSpawn) window.lastBombSpawn=now;
+if(now-window.lastBombSpawn>1800){
+bombs.push(bomb());
+if(bombs.length>14) bombs.shift();
+window.lastBombSpawn=now;
+}
+
+for(const b of bombs){
+b.r=getBombRadius(b);
+if(dist(player,b)<player.r+b.r){
+endGame('BOOM!','Bomb hit.');
+return;
+}
+}
+
+updateBots();
+
+if(portal.active&&now-portal.lastMove>1500){
+portal.x=rand(90,W-90);
+portal.y=rand(100,H-CONTROL_H-90);
+portal.lastMove=now;
+}
+
+if(portal.active&&dist(player,portal)<player.r+portal.r*.7){
+endGame('SUCCESS','Escaped!');
+return;
+}
+
+ctx.clearRect(0,0,W,H);
+
+dots.forEach(d=>glow(d.x,d.y,d.r,'#00eaff',16));
+bombs.forEach(b=>glow(b.x,b.y,b.r,'#ff245d',24));
+drawBots();
+
+if(portal.active){
+glow(portal.x,portal.y,portal.r,'#ffe600',35);
+}
+
+glow(player.x,player.y,player.r,player.m>3?'#ffd700':'#8affff',34);
+
+ctx.fillStyle='#06111f';
+ctx.font='bold 14px Arial';
+ctx.fillText(player.m.toFixed(2)+'x',player.x-10,player.y+4);
+
+multEl.textContent='x'+player.m.toFixed(2);
+
+requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
