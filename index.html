@@ -122,13 +122,29 @@ function initAudio(){
 }
 function updateAudio(now){
   if(!audioCtx||!player) return;
-  const intensity=Math.min(player.m/10,1);
-  ambientGain.gain.value=0.003+intensity*0.014;
-  ambientOsc.frequency.value=38+player.m*3.2;
-  const beat=Math.max(0,Math.sin(now*(0.0028+intensity*0.007)));
-  heartGain.gain.value=beat*(0.012+intensity*0.07);
-  heartOsc.frequency.value=42+player.m*2;
-  document.body.style.filter=`brightness(${1+beat*(0.025+intensity*0.06)})`;
+
+  const elapsed = now - startTime;
+  const timePressure = Math.min(elapsed / roundLength, 1);
+  const multiplierPressure = Math.min(player.m / 10, 1);
+  const intensity = Math.min(1, timePressure * 0.65 + multiplierPressure * 0.55);
+
+  // Smooth rising casino tension tone
+  ambientGain.gain.value = 0.004 + intensity * 0.026;
+  ambientOsc.frequency.value = 34 + intensity * 55 + player.m * 1.5;
+
+  // Heartbeat becomes faster and louder as time runs out / multiplier grows
+  const beatSpeed = 0.0028 + intensity * 0.010;
+  const beat = Math.max(0, Math.sin(now * beatSpeed));
+  const pulse = Math.pow(beat, 2.4);
+
+  heartGain.gain.value = pulse * (0.018 + intensity * 0.12);
+  heartOsc.frequency.value = 40 + intensity * 18;
+
+  // Full screen pulse synced with heartbeat
+  const scale = 1 + pulse * (0.006 + intensity * 0.032);
+  const brightness = 1 + pulse * (0.025 + intensity * 0.10);
+  document.body.style.transform = `scale(${scale})`;
+  document.body.style.filter = `brightness(${brightness})`;
 }
 
 function makeDot(){
@@ -174,13 +190,13 @@ function startGame(){
   bots=Array.from({length:mobile()?5:7},(_,i)=>makeBot(i));
   portal={x:rand(80,W-80),y:rand(80,H-CONTROL_H-80),r:mobile()?30:36,active:false,lastMove:0};
   startTime=performance.now(); roundLength=rand(12000,18000);
-  window.lastBombSpawn=0; running=true; center.style.display='none'; statusEl.textContent='Grow';
+  window.lastBombSpawn=0; running=true; document.body.style.transform='scale(1)'; document.body.style.filter='brightness(1)'; center.style.display='none'; statusEl.textContent='Grow';
   requestAnimationFrame(loop);
 }
 showStart();
 
 function endGame(title,msg){
-  running=false; document.body.style.filter='brightness(1)'; resetKnob();
+  running=false; document.body.style.transform='scale(1)'; document.body.style.filter='brightness(1)'; resetKnob();
   showStart(title, msg+`<br>Final: x${player.m.toFixed(2)}`, 'PLAY AGAIN');
 }
 function updateBots(){
@@ -214,9 +230,9 @@ function loop(now){
   if(elapsed>2000){portal.active=true;statusEl.textContent='ESCAPE!'}
   if(elapsed>=roundLength){endGame('LOST','Arena collapsed.');return}
 
-  const maxSpeed=mobile()?1.65:3.8;
-  const accel=mobile()?0.18:0.34;
-  const friction=mobile()?0.82:0.86;
+  const maxSpeed=mobile()?2.25:4.05;
+  const accel=mobile()?0.24:0.36;
+  const friction=mobile()?0.84:0.87;
   const slow=Math.max(.58,1-(player.r-player.baseR)*0.010);
 
   if(joy.active){
@@ -305,7 +321,7 @@ function touchHandler(e){
     const rect=pad.getBoundingClientRect();
     const cx=rect.left+rect.width/2, cy=rect.top+rect.height*.42;
     const dx=t.clientX-cx, dy=t.clientY-cy, len=Math.hypot(dx,dy);
-    const dead=18, max=58;
+    const dead=16, max=64;
     if(len<dead){joy.x=0;joy.y=0;joy.active=false;resetKnob();return}
     const power=Math.min((len-dead)/(max-dead),1);
     const smooth=Math.pow(power,1.6);
